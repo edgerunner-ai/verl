@@ -324,6 +324,57 @@ def apply_monkey_patch(
     if use_prefix_grouper:
         apply_prefix_grouper_patch()
 
+    # EdgeRunner: Gemma-4 cross-layer KV-sharing under FSDP2 MixedPrecisionPolicy
+    # (cast_forward_inputs=True). FSDP2's _apply_to_tensors reconstructs plain dicts
+    # per layer, so anchor writes are invisible to sharer layers -> KeyError
+    # 'sliding_attention' in compute_log_prob. Seed a non-dict holder instead.
+    if getattr(model.config, "model_type", None) == "gemma4":
+        try:
+            import functools
+            from transformers.models.gemma4 import modeling_gemma4 as _g4
+
+            class _KVStates:
+                __slots__ = ("_d",)
+
+                def __init__(self, initial=None):
+                    self._d = dict(initial) if initial else {}
+
+                def __getitem__(self, key):
+                    return self._d[key]
+
+                def __setitem__(self, key, value):
+                    self._d[key] = value
+
+                def __contains__(self, key):
+                    return key in self._d
+
+                def get(self, key, default=None):
+                    return self._d.get(key, default)
+
+                def pop(self, key, *args):
+                    return self._d.pop(key, *args)
+
+            TextModel = getattr(_g4, "Gemma4TextModel", None)
+            if TextModel is not None and not getattr(TextModel.forward, "_er_kvshare_patched", False):
+                _orig = TextModel.forward
+
+                @functools.wraps(_orig)
+                def _forward(self, *args, **kwargs):
+                    skv = kwargs.get("shared_kv_states")
+                    if skv is None:
+                        kwargs["shared_kv_states"] = _KVStates()
+                    elif type(skv) is dict:
+                        kwargs["shared_kv_states"] = _KVStates(skv)
+                    return _orig(self, *args, **kwargs)
+
+                _forward._er_kvshare_patched = True
+                TextModel.forward = _forward
+                print("Monkey patch Gemma4 shared_kv_states as non-dict leaf (edgerunner)")
+        except Exception as _e:  # noqa: BLE001
+            import warnings as _w
+
+            _w.warn(f"[edgerunner] gemma4 kvshare patch failed: {_e}")
+
     """Replace _flash_attention_forward to _ulysses_flash_attention_forward"""
     module = sys.modules[model.__module__]
 

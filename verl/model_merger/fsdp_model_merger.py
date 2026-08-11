@@ -199,7 +199,13 @@ class FSDPModelMerger(BaseModelMerger):
                     # 2-D list, FSDP + TP
                     raise NotImplementedError("FSDP + TP is not supported yet")
             else:
-                state_dict[key] = torch.cat(state_dict[key], dim=0)
+                # Non-DTensor params are REPLICATED under FSDP (e.g. Gemma-4 layer_scalar).
+                # Unconditional cat turns (1,) into (world_size,); dedupe identical replicas.
+                shards = state_dict[key]
+                if all(torch.equal(shards[0], t) for t in shards[1:]):
+                    state_dict[key] = shards[0]
+                else:
+                    state_dict[key] = torch.cat(shards, dim=0)
 
         return state_dict
 
