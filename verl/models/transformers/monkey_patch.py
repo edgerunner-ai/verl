@@ -375,6 +375,31 @@ def apply_monkey_patch(
 
             _w.warn(f"[edgerunner] gemma4 kvshare patch failed: {_e}")
 
+        # Text-only batches never run the vision tower; FSDP2 still post-backwards
+        # those units and crashes on lazily-missing `_unsharded_param` (same bug
+        # NeMo AutoModel guards). Skip the no-grad upcast when the field is absent.
+        try:
+            from torch.distributed.fsdp._fully_shard._fsdp_param import FSDPParam as _FSDPParam
+
+            _orig_acc = _FSDPParam.to_accumulated_grad_if_needed
+            if not getattr(_orig_acc, "_er_gemma4_guarded", False):
+
+                def _guarded_to_accumulated_grad_if_needed(self):
+                    try:
+                        return _orig_acc(self)
+                    except AttributeError as exc:
+                        if "_unsharded_param" not in str(exc) or hasattr(self, "_unsharded_param"):
+                            raise
+                        return None
+
+                _guarded_to_accumulated_grad_if_needed._er_gemma4_guarded = True
+                _FSDPParam.to_accumulated_grad_if_needed = _guarded_to_accumulated_grad_if_needed
+                print("Monkey patch FSDPParam.to_accumulated_grad_if_needed for Gemma4 text-only (edgerunner)")
+        except Exception as _e:  # noqa: BLE001
+            import warnings as _w
+
+            _w.warn(f"[edgerunner] gemma4 FSDP accumulated-grad guard failed: {_e}")
+
     """Replace _flash_attention_forward to _ulysses_flash_attention_forward"""
     module = sys.modules[model.__module__]
 
