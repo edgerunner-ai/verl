@@ -1058,10 +1058,13 @@ class AgentLoopWorker:
             output.extra_fields["teacher_logprobs"] = teacher_logprobs
 
     def _get_teacher_system_prompt(self, routing_key: Optional[str]) -> Optional[str]:
-        from verl.experimental.teacher_loop.teacher_manager import resolve_teacher_system_prompt
+        from verl.experimental.teacher_loop.teacher_manager import resolve_teacher_system_prompt_for_sample
 
         teacher_key = self.teacher_server_manager._resolve_teacher_key(routing_key)
-        return resolve_teacher_system_prompt(self.teacher_server_manager.teacher_model_configs[teacher_key])
+        return resolve_teacher_system_prompt_for_sample(
+            self.teacher_server_manager.teacher_model_configs[teacher_key],
+            routing_key,
+        )
 
     def _build_teacher_sequence_with_system(
         self,
