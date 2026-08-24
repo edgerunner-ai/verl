@@ -148,9 +148,17 @@ class DistillationTeacherModelConfig(BaseConfig):
     system_prompt_path (str, optional):
         Path to a UTF-8 text file containing the teacher-only system prompt. Used when
         ``system_prompt`` is unset. Prefer this for long prompts (Hydra-friendly).
+    system_prompt_by_key (dict, optional):
+        Per-sample teacher system prompts for a *single* loaded teacher. Keys must
+        match ``sample[distillation.teacher_key]`` (typically ``data_source``). A
+        value is either a filesystem path or inline text; empty/null means no
+        system turn for that key. When this map is non-empty it replaces
+        ``system_prompt`` / ``system_prompt_path`` for scoring. Use this when the
+        same teacher weights should see an optional privileged prompt depending
+        on the mix, without launching a second replica.
     """
 
-    _mutable_fields = BaseConfig._mutable_fields | {"num_replicas", "key"}
+    _mutable_fields = BaseConfig._mutable_fields | {"num_replicas", "key", "system_prompt_by_key"}
 
     key: Optional[str] = None
     model_path: Optional[str] = None
@@ -159,6 +167,7 @@ class DistillationTeacherModelConfig(BaseConfig):
     num_replicas: Optional[int] = 0
     system_prompt: Optional[str] = None
     system_prompt_path: Optional[str] = None
+    system_prompt_by_key: Optional[dict] = None
 
     @property
     def per_replica_world_size(self) -> int:
@@ -171,6 +180,35 @@ class DistillationTeacherModelConfig(BaseConfig):
     @property
     def world_size(self) -> int:
         return self.num_replicas * self.per_replica_world_size
+
+    def _system_prompt_specs(self) -> list[str]:
+        specs: list[str] = []
+        by_key = self.system_prompt_by_key or {}
+        try:
+            values = dict(by_key).values()
+        except Exception:
+            values = []
+        for v in values:
+            if v is not None and str(v).strip():
+                specs.append(str(v))
+        if specs:
+            return specs
+        if self.system_prompt and str(self.system_prompt).strip():
+            specs.append(str(self.system_prompt))
+        elif self.system_prompt_path and str(self.system_prompt_path).strip():
+            specs.append(str(self.system_prompt_path))
+        return specs
+
+    @staticmethod
+    def _system_token_budget_for_spec(spec: str) -> int:
+        path = os.path.expanduser(spec)
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as f:
+                return max(256, len(f.read()) // 2)
+        if "/" in spec or spec.endswith(".txt"):
+            # Path may be resolved later relative to the job cwd; keep a floor.
+            return 2048
+        return max(256, len(spec) // 2)
 
     def check_configured(self):
         if self.model_path is None:
@@ -189,16 +227,8 @@ class DistillationTeacherModelConfig(BaseConfig):
         student_prompt_length = self.inference.prompt_length
         student_response_length = self.inference.response_length
         system_token_budget = 0
-        if self.system_prompt and str(self.system_prompt).strip():
-            system_token_budget = max(256, len(str(self.system_prompt)) // 2)
-        elif self.system_prompt_path and str(self.system_prompt_path).strip():
-            path = os.path.expanduser(str(self.system_prompt_path))
-            if os.path.isfile(path):
-                with open(path, encoding="utf-8") as f:
-                    system_token_budget = max(256, len(f.read()) // 2)
-            else:
-                # Path may be resolved later relative to the job cwd; keep a floor.
-                system_token_budget = 2048
+        for spec in self._system_prompt_specs():
+            system_token_budget = max(system_token_budget, self._system_token_budget_for_spec(spec))
         required_context_len = student_prompt_length + student_response_length + 1 + system_token_budget
         if max_model_len is not None and required_context_len > max_model_len:
             raise ValueError(

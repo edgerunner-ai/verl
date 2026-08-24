@@ -132,6 +132,23 @@ class TeacherSystemPromptTests(unittest.TestCase):
         self.assertGreaterEqual(cfg.inference.prompt_length, 1024 + 4096)
         self.assertLessEqual(cfg.inference.prompt_length, 8191)
 
+    def test_system_prompt_by_key_path_and_empty(self):
+        from verl.experimental.teacher_loop.teacher_manager import resolve_teacher_system_prompt_for_sample
+
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "er.txt"
+            path.write_text("ER21", encoding="utf-8")
+            cfg = DistillationTeacherModelConfig(
+                key="default",
+                model_path="dummy",
+                num_replicas=1,
+                system_prompt_by_key={"gold_mil": str(path), "gpqa_if_tqa": ""},
+            )
+            self.assertEqual(resolve_teacher_system_prompt_for_sample(cfg, "gold_mil"), "ER21")
+            self.assertIsNone(resolve_teacher_system_prompt_for_sample(cfg, "gpqa_if_tqa"))
+            with self.assertRaisesRegex(ValueError, "No system_prompt_by_key"):
+                resolve_teacher_system_prompt_for_sample(cfg, "unknown")
+
 
 if __name__ == "__main__":
     unittest.main()

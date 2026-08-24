@@ -44,16 +44,47 @@ def resolve_teacher_system_prompt(teacher_model_config: DistillationTeacherModel
     path = teacher_model_config.system_prompt_path
     if path is None or not str(path).strip():
         return None
-    path = os.path.expanduser(str(path))
-    if not os.path.isfile(path):
-        raise FileNotFoundError(
-            f"distillation teacher system_prompt_path not found: {path!r}"
-        )
-    with open(path, encoding="utf-8") as f:
-        text = f.read()
-    if not text.strip():
-        raise ValueError(f"distillation teacher system_prompt_path is empty: {path!r}")
-    return text
+    return _load_system_prompt_spec(str(path))
+
+
+def _load_system_prompt_spec(spec: str) -> str:
+    path = os.path.expanduser(spec)
+    if os.path.isfile(path):
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        if not text.strip():
+            raise ValueError(f"distillation teacher system prompt file is empty: {path!r}")
+        return text
+    if "/" in spec or spec.endswith(".txt"):
+        raise FileNotFoundError(f"distillation teacher system_prompt_path not found: {path!r}")
+    if not spec.strip():
+        raise ValueError("distillation teacher system prompt is empty")
+    return spec
+
+
+def resolve_teacher_system_prompt_for_sample(
+    teacher_model_config: DistillationTeacherModelConfig,
+    routing_key: Optional[str] = None,
+) -> Optional[str]:
+    """System prompt for one sample. Honors ``system_prompt_by_key`` when set."""
+    by_key = teacher_model_config.system_prompt_by_key
+    if by_key:
+        mapping = dict(by_key)
+        if routing_key is None:
+            raise ValueError(
+                "system_prompt_by_key is set but the sample has no routing key "
+                f"(distillation.teacher_key). Configured keys: {sorted(mapping)}"
+            )
+        if routing_key not in mapping:
+            raise ValueError(
+                f"No system_prompt_by_key entry for routing key {routing_key!r}. "
+                f"Configured keys: {sorted(mapping)}"
+            )
+        spec = mapping[routing_key]
+        if spec is None or not str(spec).strip():
+            return None
+        return _load_system_prompt_spec(str(spec))
+    return resolve_teacher_system_prompt(teacher_model_config)
 
 
 def inject_system_message(messages: list[dict], system_prompt: str) -> list[dict]:
