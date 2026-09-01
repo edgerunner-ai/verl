@@ -1,4 +1,4 @@
-# Copyright 2025 Edgerunner AI / Bytedance Ltd. and/or its affiliates
+# Copyright 2025 Bytedance Ltd. and/or its affiliates
 """CPU tests for asymmetric teacher system-prompt OPD helpers."""
 
 from __future__ import annotations
