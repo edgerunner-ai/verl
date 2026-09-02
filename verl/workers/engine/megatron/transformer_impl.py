@@ -340,9 +340,13 @@ class MegatronEngine(BaseEngine):
         else:
             from verl.models.mcore.bridge import AutoBridge
 
-            # Use Megatron-Bridge to convert HF config to Megatron config
+            # Use Megatron-Bridge to convert HF config to Megatron config.
+            # Forward Hub revision: from_hf_pretrained reloads the HF config and
+            # otherwise follows `main` when `path` is a Hub id.
             bridge = AutoBridge.from_hf_pretrained(
-                self.model_config.local_path, trust_remote_code=self.model_config.trust_remote_code
+                self.model_config.local_path,
+                trust_remote_code=self.model_config.trust_remote_code,
+                **self.model_config.hub_revision_kwargs(),
             )
             # Get Megatron provider and configure it
             provider = bridge.to_megatron_provider(load_weights=False)
