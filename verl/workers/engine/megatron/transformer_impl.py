@@ -338,15 +338,19 @@ class MegatronEngine(BaseEngine):
             if self.is_value_model and hasattr(tf_config, "share_embeddings_and_output_weights"):
                 tf_config.share_embeddings_and_output_weights = False
         else:
+            from huggingface_hub import snapshot_download
             from verl.models.mcore.bridge import AutoBridge
 
-            # Use Megatron-Bridge to convert HF config to Megatron config.
-            # Forward Hub revision: from_hf_pretrained reloads the HF config and
-            # otherwise follows `main` when `path` is a Hub id.
+            # Megatron-Bridge looks for safetensors on the filesystem. Hub ids are
+            # not directories; pin revision via snapshot_download (HF cache hit).
+            hf_src = self.model_config.local_path
+            rev_kw = self.model_config.hub_revision_kwargs()
+            if not str(hf_src).startswith("/"):
+                hf_src = snapshot_download(hf_src, **rev_kw)
+            self._megatron_hf_src = hf_src
             bridge = AutoBridge.from_hf_pretrained(
-                self.model_config.local_path,
+                hf_src,
                 trust_remote_code=self.model_config.trust_remote_code,
-                **self.model_config.hub_revision_kwargs(),
             )
             # Get Megatron provider and configure it
             provider = bridge.to_megatron_provider(load_weights=False)
@@ -511,11 +515,10 @@ class MegatronEngine(BaseEngine):
                 allowed_mismatched_params = []
                 if self.is_value_model:
                     allowed_mismatched_params = ["output_layer.weight"]
-                # load_hf_weights(hf_path=...) reloads the Hub repo and does not
-                # forward revision. Reuse weights already loaded by
-                # from_hf_pretrained(..., revision=...).
                 self.bridge.load_hf_weights(
-                    module, hf_path=None, allowed_mismatched_params=allowed_mismatched_params
+                    module,
+                    self._megatron_hf_src,
+                    allowed_mismatched_params=allowed_mismatched_params,
                 )
 
         if torch.distributed.get_rank() == 0:
