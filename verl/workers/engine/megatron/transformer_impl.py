@@ -511,8 +511,11 @@ class MegatronEngine(BaseEngine):
                 allowed_mismatched_params = []
                 if self.is_value_model:
                     allowed_mismatched_params = ["output_layer.weight"]
+                # load_hf_weights(hf_path=...) reloads the Hub repo and does not
+                # forward revision. Reuse weights already loaded by
+                # from_hf_pretrained(..., revision=...).
                 self.bridge.load_hf_weights(
-                    module, self.model_config.local_path, allowed_mismatched_params=allowed_mismatched_params
+                    module, hf_path=None, allowed_mismatched_params=allowed_mismatched_params
                 )
 
         if torch.distributed.get_rank() == 0:
