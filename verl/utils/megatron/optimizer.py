@@ -229,6 +229,30 @@ def get_megatron_optimizer(
     )
 
 
+def _clamp_megatron_lr_warmup_steps(lr_warmup_steps, lr_decay_steps):
+    """Megatron-Core requires ``lr_warmup_steps < lr_decay_steps``.
+
+    Verl sets ``lr_decay_steps = total_training_steps`` when unset. Smoke runs
+    with a production warmup (e.g. 20) and a short ``total_training_steps``
+    (e.g. 10) then crash in ``OptimizerParamScheduler.__init__``. FSDP's
+    cosine schedule does not have this strict inequality. Clamp and warn.
+    """
+    if lr_warmup_steps is None or int(lr_warmup_steps) < 0:
+        lr_warmup_steps = 0
+    lr_decay_steps = int(lr_decay_steps)
+    lr_warmup_steps = int(lr_warmup_steps)
+    if lr_decay_steps <= 0:
+        return lr_warmup_steps, lr_decay_steps
+    if lr_warmup_steps >= lr_decay_steps:
+        clamped = max(0, lr_decay_steps - 1)
+        print_rank_0(
+            f"Megatron lr_warmup_steps ({lr_warmup_steps}) >= lr_decay_steps "
+            f"({lr_decay_steps}); clamping warmup to {clamped}."
+        )
+        lr_warmup_steps = clamped
+    return lr_warmup_steps, lr_decay_steps
+
+
 def get_megatron_optimizer_param_scheduler(
     optimizer,
     config,
@@ -247,6 +271,8 @@ def get_megatron_optimizer_param_scheduler(
         config.get("lr_warmup_steps", None) is None or config.lr_warmup_steps <= 0
     ):
         lr_warmup_steps = int(config.lr_warmup_steps_ratio * lr_decay_steps)
+
+    lr_warmup_steps, lr_decay_steps = _clamp_megatron_lr_warmup_steps(lr_warmup_steps, lr_decay_steps)
 
     opt_param_scheduler = OptimizerParamScheduler(
         optimizer,

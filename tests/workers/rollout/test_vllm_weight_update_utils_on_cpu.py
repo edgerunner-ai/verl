@@ -217,6 +217,26 @@ def test_vllm_update_weights_loads_params_and_buffers():
     )
 
 
+def test_vllm_update_weights_aliases_tied_lm_head_into_same_load():
+    model = _ToyModel()
+    loaded_param_names = []
+
+    def _fake_load_weights(weights):
+        loaded_param_names.extend(name for name, _ in weights)
+
+    model.load_weights = _fake_load_weights
+    worker = object.__new__(vLLMColocateWorkerExtension)
+    worker.model_runner = _FakeModelRunner(model)
+    head = torch.ones(4, 4, dtype=torch.float32)
+    worker._update_weights(
+        [("language_model.lm_head.weight", head)],
+        peft_config=None,
+        base_sync_done=False,
+    )
+    assert "language_model.lm_head.weight" in loaded_param_names
+    assert "language_model.model.embed_tokens.weight" in loaded_param_names
+
+
 def test_vllm_update_weights_syncs_buffers_to_mtp_drafter():
     """When an MTP drafter is synced, its registered buffers must be updated too."""
     main_model = _ToyModel()
