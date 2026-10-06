@@ -382,7 +382,15 @@ class vLLMColocateWorkerExtension:
             logger.info(f"vLLM load weights, loaded_params: {len(weights)}")
         else:
             # Same-batch aliases so vLLM's tied-weight skip of lm_head still sees embed_tokens.
-            weights = ensure_tied_embed_aliases(weights)
+            # Skip this when embeddings are not tied: NemotronH sends real
+            # embeddings, and the alias would overwrite them with lm_head.
+            # Gemma-4 vLLM nests the LM under language_model; text models do not.
+            hf_config = self.model_runner.vllm_config.model_config.hf_config
+            if getattr(hf_config, "tie_word_embeddings", True):
+                include_mm_alias = hasattr(self.model_runner.model, "language_model")
+                weights = ensure_tied_embed_aliases(
+                    weights, include_language_model_alias=include_mm_alias
+                )
             param_updates, buffer_updates, named_buffers = split_buffer_updates(self.model_runner.model, weights)
             # Add the FP8 related logic here as sharding manager has been deprecated.
             # Check if FP8 quantization is enabled and apply appropriate weight loading

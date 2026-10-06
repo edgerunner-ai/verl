@@ -42,6 +42,18 @@ def test_ensure_tied_embed_aliases_duplicates_gemma4_mm_lm_head():
     assert aliased["language_model.model.embed_tokens.weight"] is head
 
 
+def test_ensure_tied_embed_aliases_skips_untied_models():
+    head = torch.ones(3, 2)
+    embed = torch.zeros(3, 2)
+    weights = [
+        ("model.embeddings.weight", embed),
+        ("lm_head.weight", head),
+    ]
+    out = ensure_tied_embed_aliases(weights, tie_word_embeddings=False)
+    assert out == weights
+    assert all(name != "model.embed_tokens.weight" for name, _ in out)
+
+
 def test_ensure_tied_embed_aliases_noop_when_embed_already_present():
     t = torch.ones(2, 2)
     weights = [
